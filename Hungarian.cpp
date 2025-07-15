@@ -1,13 +1,47 @@
 ///////////////////////////////////////////////////////////////////////////////
-// Hungarian.cpp: Implementation file for Class HungarianAlgorithm.
-// 
-// This is a C++ wrapper with slight modification of a hungarian algorithm implementation by Markus Buehren.
-// The original implementation is a few mex-functions for use in MATLAB, found here:
-// http://www.mathworks.com/matlabcentral/fileexchange/6543-functions-for-the-rectangular-assignment-problem
-// 
-// Both this code and the orignal code are published under the BSD license.
-// by Cong Ma, 2016
-// 
+/*
+ Hungarian.cpp: Implementation file for Class HungarianAlgorithm.
+
+ This is a C++ wrapper with slight modification of a hungarian algorithm implementation by Markus Buehren.
+ The original implementation is a few mex-functions for use in MATLAB, found here:
+ http://www.mathworks.com/matlabcentral/fileexchange/6543-functions-for-the-rectangular-assignment-problem
+
+ Both this code and the orignal code are published under the BSD license.
+ by Cong Ma, 2016
+
+ 该实现处理的是一个成本矩阵，旨在找到一个最小成本的二分图匹配（bipartite Matching） 即在行和列之间建立一个一对一的映射，使得总成本最小
+
+    1，准备阶段（主函数Solve）：接受一个vector<vector<double>>格式的成本矩阵，并将其转换为一个一维的C风格数组，以便于指针操作，提高效率
+    2，步骤1：矩阵规约（assignment optimal）：目标：确保成本矩阵的每一行和每一列都至少包含一个零
+            操作：如果函数小于列数，对每一行进行规约：找到该行中的最小元素，然后用该行的所有元素减去它
+                 如果行数大于列数，则对每一列进行规约：找到该列中的最小元素，然后用该列的所有元素减去它
+    3，步骤2：寻找初步匹配（step2a和step2b） 目标：找到一个初始的，尽可能多的“星号零”匹配
+            操作：遍历矩阵，如果找到一个零点，且该零点所在的列还没有被其他星号零占据，就将这个零点标记为星号零（starred zero），并覆盖该列
+                 算法会进入step2b，检查被覆盖的列数是否等于矩阵的最小维度（行数或列数中较小的一个）
+                 如果是，说明找到了一个最优解，算法结束。
+                 如果不是，算法进入下一步
+    4，步骤3：寻找更多的零（step3）  目标：找到一个未被覆盖的零，来尝试改进当前的匹配
+            操作：遍历所有未被覆盖的行和未被覆盖的列
+                  如果找到一个零点，就将其标记未撇号零（Primed Zero）
+                  然后检查这个零点所在的行是否有星号零
+                  如果有星号零，就覆盖该行，并取消覆盖该星号零所在的列。然后继续寻找下一个零。
+                  如果没有星号零，说明找到了一个可以扩展的路径，算法进入下一步。
+                  如果所有未被覆盖的零都已被处理，但仍未找到增广路径，则进入步骤 5。
+    5，步骤4：增广匹配（step4）：通过一个增广路径，增加匹配的数量
+             操作：从步骤 3 中找到的“孤立”撇号零开始，沿着一条由星号零和撇号零交替组成的路径，将路径上的所有撇号零变为星号零，将路径上的所有星号零变为普通零。
+                  这次操作会使匹配数量增加 1。
+                  完成后，清除所有撇号零，并取消覆盖所有行和列。
+                  然后算法返回到步骤 2a，继续寻找匹配。
+    6，步骤5：调整矩阵（step5） 目标：在矩阵中创造更多零点，以便能找到新的增广路径
+            操作：找到所有未被覆盖的元素中的最小值 h。
+                 将 h 从所有未被覆盖的列中减去。
+                 将 h 加到所有被覆盖的行上。
+                 这一步会产生新的零点。
+                 然后算法返回到步骤 3，继续寻找新的匹配。
+
+    算法会在步骤 2、3、4、5 之间不断迭代，直到满足步骤 2 的条件（被覆盖的列数等于矩阵的最小维度），此时算法结束。
+    最后，根据最终的星号零位置来构建匹配结果，并计算总成本。
+*/
 
 #include <stdlib.h>
 #include <cfloat> // for DBL_MAX
@@ -24,6 +58,7 @@ HungarianAlgorithm::~HungarianAlgorithm(){}
 //********************************************************//
 double HungarianAlgorithm::Solve(vector <vector<double> >& DistMatrix, vector<int>& Assignment)
 {
+    // 获取Distmatrix的维度，nrows和ncols
 	unsigned int nRows = DistMatrix.size();
 	unsigned int nCols = DistMatrix[0].size();
 
@@ -32,13 +67,13 @@ double HungarianAlgorithm::Solve(vector <vector<double> >& DistMatrix, vector<in
 	double cost = 0.0;
 
 	// Fill in the distMatrixIn. Mind the index is "i + nRows * j".
-	// Here the cost matrix of size MxN is defined as a double precision array of N*M elements. 
+	// Here the cost matrix of size MxN is defined as a double precision array of N*M elements.
 	// In the solving functions matrices are seen to be saved MATLAB-internally in row-order.
 	// (i.e. the matrix [1 2; 3 4] will be stored as a vector [1 3 2 4], NOT [1 2 3 4]).
 	for (unsigned int i = 0; i < nRows; i++)
 		for (unsigned int j = 0; j < nCols; j++)
 			distMatrixIn[i + nRows * j] = DistMatrix[i][j];
-	
+
 	// call solving function
 	assignmentoptimal(assignment, &cost, distMatrixIn, nRows, nCols);
 
